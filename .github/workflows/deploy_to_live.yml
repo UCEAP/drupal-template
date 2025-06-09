@@ -14,8 +14,8 @@ jobs:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          TERMINUS_TOKEN: op://secrets-example/pantheon-terminus/credential
-          SSH_PRIVATE_KEY: op://secrets-example/pantheon-ssh/private key
+          TERMINUS_TOKEN: op://secrets-template/pantheon-terminus/credential
+          SSH_PRIVATE_KEY: op://secrets-template/pantheon-ssh/private key
       - name: Deploy to LIVE
         run: |
           echo "$SSH_PRIVATE_KEY" > ../private.key

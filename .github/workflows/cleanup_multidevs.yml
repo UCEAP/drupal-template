@@ -19,7 +19,7 @@ jobs:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          TERMINUS_TOKEN: op://secrets-example/pantheon-terminus/credential
+          TERMINUS_TOKEN: op://secrets-template/pantheon-terminus/credential
       - name: Prune stale multidev environments
         env:
           TERMINUS_SITE: ${{ vars.TERMINUS_SITE }}
