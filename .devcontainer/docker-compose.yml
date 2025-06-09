@@ -1,0 +1,11 @@
+services:
+  drupal:
+    image: "ghcr.io/uceap/devcontainer-drupal:main"
+    volumes:
+      - ../..:/workspaces:cached
+  mariadb:
+    image: "ghcr.io/uceap/devcontainer-db-template:main"
+    restart: always
+  redis:
+    image: "redis:6"
+    restart: always

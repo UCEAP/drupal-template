@@ -1,0 +1,25 @@
+name: Deploy to LIVE
+on: workflow_dispatch
+jobs:
+  deploy_to_live:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/uceap/devcontainer-drupal:main
+    env:
+      TERMINUS_SITE: ${{ vars.TERMINUS_SITE }}
+    steps:
+      - name: Load secrets
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          TERMINUS_TOKEN: op://secrets-example/pantheon-terminus/credential
+          SSH_PRIVATE_KEY: op://secrets-example/pantheon-ssh/private key
+      - name: Deploy to LIVE
+        run: |
+          echo "$SSH_PRIVATE_KEY" > ../private.key
+          chmod 600 ../private.key
+          eval `ssh-agent -s`
+          ssh-add ../private.key
+          uceap deploy-to-live

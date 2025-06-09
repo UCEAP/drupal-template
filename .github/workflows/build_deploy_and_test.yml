@@ -1,0 +1,243 @@
+name: Build, deploy and test
+on:
+  push:
+    branches:
+      - main
+      - qa
+  pull_request:
+defaults:
+  run:
+    shell: bash
+env:
+  TZ: "/usr/share/zoneinfo/America/Los_Angeles"
+  CI_BRANCH: ${{ github.head_ref || github.ref_name }}
+  BASE_BRANCH: ${{ github.base_ref }}
+
+jobs:
+  build_dev:
+    name: Build for development
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/uceap/devcontainer-drupal:main
+    if: github.head_ref != 'qa' && github.head_ref != 'main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+      - name: Prep for build
+        run: composer -n dev-initialize-local
+      - name: Build project for development
+        run: composer -n install
+      - name: Upload dev build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: .
+          name: dev-build
+          include-hidden-files: true
+          retention-days: 1
+
+  build_for_pantheon:
+    name: Build for Pantheon
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/uceap/devcontainer-drupal:main
+    if: github.head_ref != 'qa' && github.head_ref != 'main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+      - name: Build project for deployment
+        run: composer -n install --no-dev --optimize-autoloader
+      - name: Remove files that should not be deployed
+        run: |
+          sed -n '/# *:.*cut.*:/,$p' .gitignore > ../deploy.gitignore
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+          git ls-files -X ../deploy.gitignore -oi | xargs rm -rf
+          find . -name .git -exec rm -rf {} +
+          cp ../deploy.gitignore .gitignore
+      - name: Upload deployment build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: .
+          name: deployment-build
+          include-hidden-files: true
+          retention-days: 1
+
+  lint:
+    name: Check lint
+    needs: [build_dev]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/uceap/devcontainer-drupal:main
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-build
+      # TODO think about using tar for our artifacts: https://github.com/actions/upload-artifact?tab=readme-ov-file#permission-loss
+      - name: Fix file modes
+        run: chmod +x ./vendor/bin/*
+      - name: PHP lint project custom modules
+        run: composer -n lint
+
+  coding_standards:
+    name: Coding standards
+    needs: [build_dev]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/uceap/devcontainer-drupal:main
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-build
+      - name: Fix file modes
+        run: chmod +x ./vendor/bin/*
+      - name: Fix dubious ownership error
+        run: git config --global --add safe.directory $GITHUB_WORKSPACE
+      - name: Check PHP coding standards for project custom modules and theme
+        run: |
+          if [ -n "$BASE_BRANCH" ]; then
+            if ! git diff --quiet --diff-filter=d origin/$BASE_BRANCH... -- '*.php' '*.module' '*.inc' '*.install' '*.test' '*.profile' '*.theme' '*.info'; then
+              composer -n code-sniff-feature
+            else
+              echo "No changes to relevant files."
+            fi
+          else
+            composer -n code-sniff
+          fi
+
+  static_analysis:
+    name: Static analysis
+    needs: [build_dev]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/uceap/devcontainer-drupal:main
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-build
+      - name: Fix file modes
+        run: chmod +x ./vendor/bin/*
+      - name: Fix dubious ownership error
+        run: git config --global --add safe.directory $GITHUB_WORKSPACE
+      - name: Run static analysis on custom modules and theme
+        run: |
+          if [ -n "$BASE_BRANCH" ]; then
+            if ! git diff --quiet --diff-filter=d origin/$BASE_BRANCH... -- '*.php' '*.module' '*.inc' '*.install' '*.test' '*.profile' '*.theme' '*.info'; then
+              composer -n static-analysis-feature
+            else
+              echo "No changes to relevant files."
+            fi
+          else
+            composer -n static-analysis
+          fi
+
+  unit_test:
+    name: Unit tests
+    needs: [build_dev]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/uceap/devcontainer-drupal:main
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-build
+      - name: Fix file modes
+        run: chmod +x ./vendor/bin/*
+      - name: Run unit tests
+        run: composer -n unit-test
+
+  prepare_pantheon:
+    name: Prepare Pantheon
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/uceap/devcontainer-drupal:main
+    outputs:
+      terminus_env: ${{ steps.determine_pantheon_env.outputs.terminus_env }}
+    if: github.head_ref != 'qa' && github.head_ref != 'main' && github.actor != 'dependabot[bot]'
+    steps:
+      - name: Determine Pantheon environment
+        id: determine_pantheon_env
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$PR_NUMBER" ]; then
+            case "$CI_BRANCH" in
+              main) export TERMINUS_ENV=dev ;;
+              qa) export TERMINUS_ENV=qa ;;
+              *) exit 1 ;; # we should never get here
+            esac
+          else
+            export TERMINUS_ENV=pr-$PR_NUMBER
+          fi
+          echo TERMINUS_ENV=$TERMINUS_ENV >> $GITHUB_ENV
+          echo terminus_env=$TERMINUS_ENV >> $GITHUB_OUTPUT
+      - name: Load secrets
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          TERMINUS_TOKEN: op://secrets-example/pantheon-terminus/credential
+      - name: Create Pantheon environment
+        env:
+          TERMINUS_SITE: ${{ vars.TERMINUS_SITE }}
+        run: |
+          terminus -n auth:login --machine-token="$TERMINUS_TOKEN"
+          set +e
+          terminus -n env:info --quiet; PANTHEON_SITE_EXISTS=$((!$?))
+          set -e
+          if [ $PANTHEON_SITE_EXISTS -eq 0 ]; then
+            terminus multidev:create $TERMINUS_SITE.dev $TERMINUS_ENV
+          fi
+
+  deploy_to_pantheon:
+    name: Deploy to Pantheon
+    needs: [build_for_pantheon, prepare_pantheon]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/uceap/devcontainer-drupal:main
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-build
+      - name: Fix file modes
+        run: find vendor/bin -type f | xargs chmod +x
+      - name: Load secrets
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          TERMINUS_TOKEN: op://secrets-example/pantheon-terminus/credential
+          SSH_PRIVATE_KEY: op://secrets-example/pantheon-ssh/private key
+      - name: deploy to Pantheon
+        env:
+          TERMINUS_SITE: ${{ vars.TERMINUS_SITE }}
+          TERMINUS_ENV: ${{ needs.prepare_pantheon.outputs.terminus_env }}
+        run: |
+          echo "$SSH_PRIVATE_KEY" > ../private.key
+          chmod 600 ../private.key
+          eval `ssh-agent -s`
+          ssh-add ../private.key
+          if [ $TERMINUS_ENV == "dev" ]; then
+            uceap deploy-to-dev
+          else
+            uceap deploy-to-multidev
+          fi
+
+  e2e_test:
+    name: Feature tests
+    needs: [deploy_to_pantheon]
+    runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' && github.ref_name != 'main' }}
+    steps:
+      - name: Run Cypress
+        run: echo "This is where the Cypress tests would run."
