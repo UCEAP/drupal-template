@@ -63,8 +63,8 @@
     }
   },
   // Run lifecycle scripts from our custom image (they will invoke local scripts if we have them)
-  "onCreateCommand": "uceap devcontainer-on-create",
-  "postCreateCommand": "uceap devcontainer-post-create",
-  "updateContentCommand": "uceap devcontainer-update-content",
-  "postStartCommand": "uceap devcontainer-post-start"
+  //"onCreateCommand": "uceap devcontainer-on-create",
+  //"postCreateCommand": "uceap devcontainer-post-create",
+  //"updateContentCommand": "uceap devcontainer-update-content",
+  //"postStartCommand": "uceap devcontainer-post-start"
 }
